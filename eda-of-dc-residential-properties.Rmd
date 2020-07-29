@@ -1,0 +1,628 @@
+
+---
+date: "4/15/2019"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r basicfcn, include=F}
+# can add quietly=T option to the require() function
+loadPkg = function(x) { if (!require(x,character.only=T, quietly =T)) { install.packages(x,dep=T,repos="http://cran.us.r-project.org"); if(!require(x,character.only=T)) stop("Package not found") } }
+```
+
+```{r init, include=F}
+#options(width = 120)
+```
+
+## Data Source
+The same dataset as the first project.  
+Link: https://www.kaggle.com/christophercorrea/dc-residential-properties  
+The dataset is not in the file, please download it before runing the code.
+```{r readdata,include=FALSE}
+rawrp <- read.csv("../input/DC_Properties.csv")
+```
+
+## Data Cleaning
+There are too many useless and redundant variables in this raw dataset. In this project, we first select the useful columns as below.  
+
+**BATHRM** - Number of Full Bathrooms  
+**HF_BATHRM** - Number of Half Bathrooms (no bathtub or shower)  
+**HEAT** - Heating  
+**AC** - Cooling  
+**NUM_UNITS** - Number of Units  
+**ROOMS** - Number of Rooms  
+**BEDRM** - Number of Bedrooms  
+**AYB** - The earliest time the main portion of the building was built  
+**YR_RMDL** - Year structure was remodeled  
+**EYB** - The year an improvement was built more recent than actual year built  
+**STORIES** - Number of stories in primary dwelling  
+**SALEDATE** - Date of most recent sale  
+**PRICE** - Price of most recent sale  
+**QUALIFIED** - Qualified  
+**SALE_NUM** - Sale Number  
+**GBA** - Gross building area in square feet  
+**BLDG_NUM** - Building Number on Property  
+**STYLE** - Style  
+**STRUCT** - Structure  
+**GRADE** - Grade  
+**CNDTN** - Condition  
+**EXTWALL** - Extrerior wall  
+**ROOF** - Roof type  
+**INTWALL** - Interior wall  
+**KITCHEN** - SNumber of kitchens  
+**FIREPLACES** - Number of fireplaces  
+**LANDARE** - ALand area of property in square feet  
+**WARD** - Ward (District is divided into eight wards, each with approximately 75,000 residents)  
+
+Secondly, apart from the NA value, there are also some "No Data" strings in this dataset (e.g. in the columns HEAT and GRADE as printed). After dropping all these NA values, we finally get the cleaned dataset with 33165 rows and 27 columns.
+
+```{r dataclean, echo=F}
+#names(rawrp)
+set.seed(2)
+
+data.clean <- rawrp[c(2:12,14:27,29,45)]
+#names(data.clean)
+cleanit <- data.clean
+selectout <- cleanit$BATHRM != "No Data"
+for (i in colnames(cleanit)) {
+  selectout <- (selectout & (cleanit[[i]] != "No Data"))
+  ifelse(cleanit[[i]]=="No Data", print(i), cleanit[[i]])
+}
+
+data.clean <- data.clean[selectout,]
+
+data.clean <- na.omit(data.clean)
+levels(data.clean[,c("AC")])[1] <- "N" #AC: "0" is "N"
+data.clean <- droplevels(data.clean) #drop unused levels
+data.clean$CNDTN <- factor(data.clean$CNDTN, levels=c("Poor","Fair","Average","Good","Very Good","Excellent"))
+
+data.clean.unscaled <- data.clean # store the unscaled data
+
+choose.num <- sapply(data.clean, is.numeric)
+data.clean[choose.num] <- lapply(data.clean[choose.num], scale) # standardization
+
+n <- nrow(data.clean)
+p <- ncol(data.clean)
+```
+
+## SMART Question: How to predict the condition of a property?
+
+Apart from the price, the condition of a property is always a determinant factor we will concern when we plan to buy a property. In this section, our purpose is going to predict the condition of a particular property without seeing the photos of it. Here, we can hardly get the specific features of a property that show the condition of this property. In other words, we cannot find the causality between some features and the condition of a property. Thus, in this report, we just try to predict a property tends to be in better condition through some general features which can be easily collected.  
+
+### Definition of condition.
+Analogous to the problem in the ranking method (e.g. customer reviews in Amazon), the assessment of the condition is varied from different individuals. Hence, there is no uniform rule to classify properties into differernt levels of condition. Here is a detailed explanation of condition from Marshall & Swift Condition Assessment (page E-6).  
+
+**Excellent Condition** - All items that can normally be repaired or refinished have recently been corrected, such as new roofing, paint, furance overhaul, state of the art components, etc. With no functional inadequacies of any consequence and all major short-lived components in like-new condition, the overall effective age has been substantially reduced upon complete revitilization of the structure regardless of the actual chronological age.  
+
+**Very Good Condition** - All items well maintained, many having been overhauled and repaired as they've showed signs of wear, increasing the life expectancy and lowering the effective age with little deterioration or obsolesence evident with a high degree of utility.  
+
+**Good Condition** - No obvious maintenance required but neither is everything new. Appearance and utility are above the standard and the overall effective age will be lower than the typical property.  
+
+**Average Condition** - Some evidence of deferred maintenance and normal obsolescence with age in that a few minor repairs are needed along with some refinishing. But with all major components still functional and contributing toward an extended life expectancy, effective age and utility is standard for like properties of its class and usage.  
+
+**Fair Condition** (Badly worn) - Much repair needed. Many items need refinishing or overhauling, deferred maintenance obvious, inadequate building utility and services all shortening the life expectancy and increasing the effective age.  
+
+**Poor Condition** (Worn Out) - Repair and overall needed on painted surfaces, roofing, plumbing, heating, numerous functional inadequacies, substandard utilities etc. (found only in extraordinary circumstances). Excessive deferred maintenance and abuse, limited value-in-use, approaching abandonment or major reconstruction, reuse or change in occupancy is imminent. Effective age is near the end of the scale regardless of the actual chronological age.
+
+### A glance at the condition
+From the distribution of the number of properties with respect to different conditions, it looks like a lanky normal distribution, which is reasonable. Over 99% of properties are in "Average", "Good", and "Very Good" condition. Therefore, it may cause some problems (will discuss later) to predict the conditon of other three levels, which is "Poor", "Fair", and "Excellent."  
+```{r condition.plot, echo=F}
+table(data.clean.unscaled$CNDTN)
+plot(data.clean.unscaled$CNDTN, log="y")
+```
+
+### Binomial prediction [with simplification]
+For simplicity, we first try to distinguish whether a property is above or below average condition. In other words, we trivially split the condition into two levels, "<= Average" (including "Poor", "Fair", "Average") and "> Average" (including "Good", "Very Good", "Excellent").  
+```{r partition.cndtnof2, echo=F}
+train_rows <- sample(1:n, 0.66*n)
+data.cndtnof2 <- data.clean
+table(data.cndtnof2$CNDTN)
+levels(data.cndtnof2$CNDTN)[c(1:3)] <- "<= Average" #"Poor","Fair","Average"
+levels(data.cndtnof2$CNDTN)[c(-1)] <- "> Average" #"Good","Very Good","Excellent"
+#levels(data.cndtnof2$CNDTN)
+table(data.cndtnof2$CNDTN)
+x.train <- model.matrix(CNDTN ~ ., data.cndtnof2[train_rows,])
+y.train <- ifelse(data.cndtnof2[train_rows, c("CNDTN")]=="> Average", 1, 0)
+x.test <- model.matrix(CNDTN ~ ., data.cndtnof2[-train_rows,])
+y.test <- ifelse(data.cndtnof2[-train_rows, c("CNDTN")]=="> Average", 1, 0)
+```
+
+### LASSO logistic regression [feature selection]
+As the condition grouped into 2 levels, we can apply the logistic regression to solve this binomial prediction problem. However, unfortunately, it does not select out a small group of variables when the lambda is within 1 standard error (over 48 features). 
+```{r condition.lasso, echo=F}
+loadPkg("glmnet")
+grid=10^seq(1,-8,length=100)
+lasso.mod <- glmnet(x = x.train, y = y.train, alpha=1, family="binomial", lambda = grid)
+#plot(lasso.mod)
+cv.lasso <- cv.glmnet(x = x.train, y = y.train, alpha=1, type.measure = "deviance", family="binomial")
+plot(cv.lasso)
+```
+
+Thus, we try to choose the model with 8 features in 5 standard error away the best model. Athough selecting a model outside 1 standard error will lead to somewhat bias, it performs well in the prediction of test data. As the prediction accuracy in the best model is 80.88%, this simplified model has a pretty good accuracy of 79.89%.  
+```{r lassomodel.predict, echo=F}
+loadPkg("gmodels") # CrossTable()
+#coef(cv.lasso, cv.lasso$lambda.1se + 4*(cv.lasso$lambda.1se - cv.lasso$lambda.min))
+probabilities <- predict(cv.lasso, 
+                         s=cv.lasso$lambda.1se + 4*(cv.lasso$lambda.1se - cv.lasso$lambda.min), 
+                         newx = x.test, type="response")
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+observed.classes <- y.test
+mean(predicted.classes == observed.classes)
+```
+
+As for the confusion matrix of the prediction result, this model performs better in predicting a property with above average condition. Here, in the test data, the accuracy is 80.9% when a property is predicted as above average condition. Besides, 94.5% above-average properties are correctly predicted in the test data.  
+```{r lassomodel.predict.ct, echo=F}
+CrossTable(predicted.classes, observed.classes, prop.chisq = F)
+```
+
+### Generalized linear model and evaluation
+LASSO selects out 8 variables ("HEAT","AC","AYB","YR_RMDL","EYB","PRICE","QUALIFIED","SALE_NUM"), then we take the 2-round feature selection through the best subset GLM. Then, "HEAT" is also moved out. In fact, "HEAT" does not contribute so much in the prediction.  
+```{r condition.bestglm, echo=F}
+loadPkg("bestglm")
+names(data.clean)
+#data.bestglm.15v <- data.cndtnof2[,c("BATHRM","HEAT","AC","AYB","YR_RMDL",
+#                                     "EYB","NUM_UNITS","PRICE","QUALIFIED","SALE_NUM",
+#                                     "STYLE","GRADE","CNDTN","EXTWALL","INTWALL","WARD")]
+data.bestglm <- data.cndtnof2[,c("HEAT","AC","AYB","YR_RMDL",
+                                    "EYB","PRICE","QUALIFIED","SALE_NUM",
+                                    "CNDTN")]
+data.bestglm$y <- data.bestglm$CNDTN
+data.bestglm$CNDTN <- NULL
+data.bestglm$y <- ifelse(data.bestglm$y == "> Average", 1, 0)
+data.bestglm$y <- as.factor(data.bestglm$y)
+train.data <- data.bestglm[train_rows,][1:1000,]
+test.data <- data.bestglm[-train_rows,]
+
+
+condition.best <- bestglm(Xy = train.data, family = binomial, 
+                          IC = "AIC", method = "seqrep") # <= 15variables
+summary(condition.best$BestModels)
+condition.best$BestModel
+#summary(condition.logit)
+```
+
+After the feature selection, we get a simple GLM to predict the condition (above or below average). This model performs quite well in ROC curve where AUC is greater than 0.8.  
+```{r roc.bestmodel, echo=F}
+loadPkg("pROC")
+prob = predict(condition.best$BestModel, newdata=test.data, type="response")
+test.data.try <- test.data
+test.data.try$prob = prob
+h = roc(y~prob, data = test.data.try)
+auc(h)
+plot(h)
+
+#predicted <- ifelse(prob>0.5, "> Average", "<= Average")
+#CrossTable(predicted, test.data$y, prop.chisq = F)
+```
+
+As for the McFadden's pseudo R^2 value, it has different evaluation criteria comparing wtih the R^2 value. McFadden states "while the R2 index is a more familiar concept to planner who are experienced in OLS, it is not as well behaved as the rho-squared measure, for ML estimation. Those unfamiliar with rho-squared should be forewarned that its values tend to be considerably lower than those of the R2 index...For example, values of 0.2 to 0.4 for rho-squared represent EXCELLENT fit." If we get such value of a GLM from 0.2 to 0.4, it indicates this model can explain most of the data.  
+```{r McFadden.bestmodel, echo=F}
+loadPkg("pscl") # use pR2( ) function to calculate McFadden statistics for model eval
+condition.logit <- glm(y ~ AC + AYB + YR_RMDL + EYB + PRICE + QUALIFIED + SALE_NUM,
+                       data = train.data, family = "binomial") # best model
+pR2(condition.logit)
+detach("package:pscl", unload = T) # good habit to remove unload packages no longer needed 
+```
+
+
+### Prediciton of 6-level condition [without simplification]
+We’ve solved the two-level prediction. Now we keep attack the 6-level prediction. Using classification tree is a better way to predict a categorical variable with multi-levels.  
+```{r, include=F}
+loadPkg("rpart") # Classification trees, rpart(formula, data=, method=,control=) 
+loadPkg("rpart.plot")
+loadPkg("randomForest") # random forest algorithm
+#loadPkg("C50") # C5.0 algorithm
+```
+
+#### (Single) Decision tree
+```{r decisionTree, include=F}
+fit <- rpart(CNDTN ~ AC + AYB + YR_RMDL + EYB + PRICE + QUALIFIED + SALE_NUM,
+             method="class",
+             data=data.clean.unscaled[train_rows,],
+             control=rpart.control(minsplit=1, minbucket=1, cp=0.005))
+
+printcp(fit) # display the results 
+plotcp(fit) # visualize cross-validation results 
+summary(fit) # detailed summary of splits
+```
+
+We apply the selected variables in the previous feature selection result to this decision tree. Here, the tree only uses two variables, "EYB" and "PRICE." From this simple prediction model, it shows an improvement after 1964 and the price over 2.4 million means the property tends to be better. However, there are two defects of this model. First, the total prediction accuracy is only 67.3%. Also, in the confusion matrix, it performs not well in the prediction of "Very Good" condition, which is only 51.1%. Second, this model misses to predict 3 minor levels, which are "Poor", "Fair", and "Excellent."  
+```{r decisionTree.plot, echo=F, fig.height=6, fig.width=10}
+rpart.plot(fit)
+tree.predicted <- predict(fit, newdata=data.clean.unscaled[-train_rows,], type="class")
+tree.observed <- data.clean.unscaled[-train_rows, c("CNDTN")]
+mean(tree.predicted == tree.observed)
+CrossTable(tree.predicted, tree.observed, prop.chisq = F)
+```
+
+
+#### Random Forest
+```{r randomForest, include=F}
+
+fit <- randomForest(CNDTN ~ AC + AYB + YR_RMDL + EYB + NUM_UNITS + PRICE + QUALIFIED + SALE_NUM, 
+            data=data.clean.unscaled[train_rows,],
+            na.action=na.roughfix,
+            ntree=100)
+
+#plot(fit)
+fit$confusion
+```
+
+To improve the prediction accuracy of the single tree model, we try to apply the random forest algorithm. The prediction accuracy works better in this improved model, but it still misses 3 minor levels.  
+```{r randomForest.plot, echo=F}
+tree.predicted <- predict(fit, newdata=data.clean.unscaled[-train_rows,], type="class")
+tree.observed <- data.clean.unscaled[-train_rows, c("CNDTN")]
+CrossTable(tree.predicted, tree.observed, prop.chisq = F)
+mean(tree.predicted == tree.observed)
+```
+
+### Limitation
+Because the criteria of the decision tree is information gain (Shannon Entropy), it tends to make a decision close to the majority. Here, most of data are condition of good, very good, and average. Thus, this tree will not tend to make a decision on condition of excellent, poor, and fair.  
+I have tried to sovle this "discrimination" problem, but still in vain. Therefore, we need a model can equally treat all levels in a categorical variable although the training data for each level is not in same size.  
+
+## SMART Question: Whether the price and sales volume have some systematic pattern over the time period?
+```{r, include=F}
+#names(rawrp)
+set.seed(2)
+grid=10^seq(1,-8,length=100)
+data.clean <- rawrp[c(2:27,29,45)]
+
+cleanit <- data.clean
+selectout <- cleanit$BATHRM != "No Data"
+for (i in colnames(cleanit)) {
+  selectout <- (selectout & (cleanit[[i]] != "No Data"))
+  ifelse(cleanit[[i]]=="No Data", print(i), cleanit[[i]])
+}
+
+data.clean <- data.clean[selectout,]
+
+data.clean <- na.omit(data.clean)
+levels(data.clean[,c("AC")])[1] <- "N" #AC: "0" is "N"
+
+data.clean.unscaled <- data.clean
+
+```
+
+```{r, echo=F}
+loadPkg("forecast") # Answer "no" for question about binary install at the prompt. "Yes" might not work.
+loadPkg("stats")
+```
+In this section, we want to use time series analysis to find some patterns of the price from the history data and make a prediction. We select SALTEDATE, and use the mean value of properties' price from the past years as the variables
+
+###Average price per month
+```{r, echo=F}
+names(data.clean.unscaled)
+
+time<- data.clean.unscaled[c(12:13)]
+#sapply(time,function(x){strsplit(x,"-")[[1]][1]})
+#as.Date(time$SALEDATE)
+#time$SALEDATE<-substr(time$SALEDATE,1,4)
+#time$month<-substr(time$SALEDATE,6,7)
+#time$day<-substr(time$SALEDATE,9,10)
+time_month<-time
+time_month$SALEDATE<-substr(time$SALEDATE,1,7)
+#tapply(time_y_m[,2],time_y_m$y_m,mean)
+
+month_mean<-aggregate(time_month[,c(2)], list(time_month$SALEDATE),FUN=mean)
+#result<-aggregate(time[,c(2)], list(time$SALEDATE),FUN=mean)
+month_mean_clean<-month_mean[-c(1:3),]
+result_price<-month_mean_clean[c(2)]
+```
+
+```{r, echo=F}
+#table(time_month$SALEDATE)
+salenum<-as.data.frame(table(time_month$SALEDATE))
+names(salenum)<-c("Date","Salenumber")
+salenum_clean<-salenum[-c(1:3),]
+result_salenum<-salenum_clean[c(2)]
+```
+
+Now we need to make a time series object. Let's set the frequence-12 for 12 months, starts at 1992 and increases in single increments:  
+```{r,fig.height=6, fig.width=15,echo=F}
+ts_price<- ts(result_price, frequency = 12, start = c(1992, 1))
+plot.ts(ts_price)
+```
+its 
+
+```{r, echo=F}
+pricecomps_add <- decompose(ts_price,type = "additive")
+pricecomps_mul <- decompose(ts_price,type = "multiplicative")
+summary(pricecomps_add$seasonal)
+summary(pricecomps_mul$seasonal)
+```
+
+
+```{r, fig.height=8, fig.width=15,echo=F}
+pricecomps_add$seasonal
+plot(pricecomps_add )
+```
+
+```{r, fig.height=6, fig.width=15,echo=F}
+pricecomps_mul$seasonal
+plot(pricecomps_mul)
+```
+
+```{r, echo=F}
+min(pricecomps_add$seasonal)
+max(pricecomps_add$seasonal)
+```
+We can see the min negative adjusted seasonal component is March and the max is July.
+Then we use HoltWinters function to olt-Winters function to smooth out the data.
+```{r, echo=F}
+priceforecast <- HoltWinters(ts_price)
+```
+
+```{r, echo=F}
+priceforecast
+```
+
+
+```{r, echo=F}
+priceforecast$SSE
+```
+
+```{r, fig.height=8, fig.width=15,echo=F}
+plot(priceforecast)
+```
+Since the SSE value is too high and the two lines seems fairly inconsistent, the time series anlaysis is not quite a good fit for the price.
+```{r, echo=F}
+pricefuture <- HoltWinters(ts_price)  # in the stats package
+pricefuture
+```
+```{r, height=6, fig.width=25,echo=F}
+pricefuture12<-forecast(priceforecast,h=12) 
+plot(pricefuture12)
+```
+
+###Sales Volumn per month
+Now let's change our object to the sales volume .
+```{r, echo=F}
+#table(time_month$SALEDATE)
+salenum<-as.data.frame(table(time_month$SALEDATE))
+names(salenum)<-c("Date","Salenumber")
+salenum_clean<-salenum[-c(1:3),]
+result_salenum<-salenum_clean[c(2)]
+```
+
+```{r,fig.height=6, fig.width=15,echo=F}
+ts_salenum<- ts(result_salenum, frequency = 12, start = c(1992, 1))
+plot.ts(ts_salenum)
+```
+
+It seems that there's some seasonality.
+Lets try to Use additive model to decompose the dataset and quantify seasonal compenent.
+```{r, echo=F}
+salenumcomps_add <- decompose(ts_salenum,type = "additive")
+summary(salenumcomps_add$seasonal)
+
+```
+
+```{r, fig.height=8, fig.width=15,echo=F}
+salenumcomps_add$seasonal
+plot(salenumcomps_add)
+```
+
+```{r, echo=F}
+min(salenumcomps_add$seasonal)
+max(salenumcomps_add$seasonal)
+```
+
+```{r, echo=F}
+salenumforecast <- HoltWinters(ts_salenum)
+```
+
+```{r, echo=F}
+salenumforecast
+```
+
+
+```{r, echo=F}
+salenumforecast$SSE
+```
+The sum of squared errors of predication (SSE) is too big, which indicates the time series forecast does not fit well.
+we can plot the original values and the forecasting values on one chart, black is the original and red is the predicted values.  
+```{r, height=8, fig.width=20,echo=F}
+plot(salenumforecast)
+```
+But we are happy that the forecast for recent years seems fit well. So lets make a specific time series forecast for the recent 6 years.
+
+###From 2013 to 2018
+```{r, echo=F}
+salenum_clean_2013<-salenum[-c(1:255),]
+result_salenum_2013<-salenum_clean_2013[c(2)]
+```
+
+```{r,fig.height=6, fig.width=15,echo=F}
+ts_salenum_2013<- ts(result_salenum_2013, frequency = 12, start = c(2013, 1))
+plot.ts(ts_salenum_2013)
+```
+From the plot, we can see there seems to be a some clear seasonality that are consistent over time, so we could do those procedures again.
+
+```{r, echo=F}
+salenumcomps_add_2013 <- decompose(ts_salenum_2013,type = "additive")
+summary(salenumcomps_add_2013$seasonal)
+
+```
+
+```{r, fig.height=8, fig.width=15,echo=F}
+salenumcomps_add_2013$seasonal
+plot(salenumcomps_add_2013)
+```
+
+```{r, echo=F}
+min(salenumcomps_add_2013$seasonal)
+max(salenumcomps_add_2013$seasonal)
+```
+We can see the min negative adjusted seasonal component is Febuary and the max positive adjusted seasonal component is June.
+Then we still use HoltWinters() function to smooth out our data and make a forecast.
+```{r, echo=F}
+salenumforecast_2013 <- HoltWinters(ts_salenum_2013)
+```
+
+```{r, echo=F}
+salenumforecast_2013
+```
+alpha=0.2, means the influence weight of recent observations is small.
+beta=0, means the slope of the trend  remains constant throught the whole time series.
+gamma=0.64, means seasonal partial predictions are based on both the recent observations and hitory observations.
+
+```{r, echo=F}
+salenumforecast_2013$SSE
+```
+And the SSE become smaller.As the plot shows, the time series forecast is more consistant with the orignal observations.
+
+```{r, height=6, fig.width=10,echo=F}
+plot(salenumforecast_2013)
+```
+
+Let's make a prediction for the next 12 months. The next peak value is predicted to be in the middle of 2019 while the valley value is predicted to be at the begining of 2019. Also, there will be a slump after the peak.
+```{r, echo=F}
+salenumfuture12<-forecast(salenumforecast_2013,h=12) 
+plot(salenumfuture12)
+```
+
+## SMART Question: How to predict the price by K nearest neighbor?
+
+```{r, echo=F}
+library(dplyr)
+library(ggmap)
+register_google(key = "AIzaSyAhGGV1_J9ipBAsF6vE7fg56zjDy_uaCvA")
+data <- read.csv("../input/DC_Properties.csv")
+```
+
+
+```{r, echo=F}
+names(data)
+cols <- c("WARD", "PRICE", "LATITUDE","LONGITUDE", "BATHRM", "ROOMS", "LANDAREA", "FIREPLACES","YR_RMDL","GRADE","CNDTN","ASSESSMENT_NBHD")
+
+for (c in cols){
+  data <- data[!is.na(data[c]),]    #removing rows with no price
+}
+
+data <- select(data, cols)
+```
+
+
+```{r, echo=F}
+q1 <- quantile(data$PRICE , seq(from = 0, to = 1, by = 0.25))[[2]]
+q2 <- quantile(data$PRICE , seq(from = 0, to = 1, by = 0.25))[[3]]
+q3 <- quantile(data$PRICE , seq(from = 0, to = 1, by = 0.25))[[4]]
+
+
+data$Quantile[data$PRICE > q3] <- "4"
+data$Quantile[data$PRICE < q3] <- "3"
+data$Quantile[data$PRICE < q2] <- "2"
+data$Quantile[data$PRICE < q1] <- "1"
+data <- data[!is.na(data["Quantile"]),]
+```
+
+
+```{r, echo=F}
+library("gmodels")
+library("FNN")
+library(class)
+
+range01 <- function(x){(x-min(x))/(max(x)-min(x))}
+
+trainLabels <- c("LATITUDE", "LANDAREA","YR_RMDL","GRADE", "WARD", "ASSESSMENT_NBHD")
+testLabels <- c("Quantile")
+smp_size <- floor(0.75 * nrow(data))
+data2 <- data
+ for (i in c(trainLabels)){
+   cat(i)
+   data[i]<- sapply(data2[i], as.numeric)
+ }
+
+train_ind <- sample(seq_len(nrow(data)), size = smp_size)
+
+train <- data[train_ind, ]
+test <- data[-train_ind, ]
+
+train_set <- train[trainLabels]
+test_set <- test[trainLabels]
+train_pre <- train[testLabels]
+test_pre <- test[testLabels]
+for (i in 6:10){
+k <- knn(train=train[, trainLabels], test = test[,trainLabels],cl = train[, c("Quantile")], k = i)
+kNN_res = table(k,as.factor(test_pre$Quantile))
+
+sum(kNN_res)  #<- the total is all the test examples
+
+kNN_acc = sum(kNN_res[row(kNN_res) == col(kNN_res)]) / sum(kNN_res)
+cat(" kNN_acc:",kNN_acc," k value:",i)}
+
+```
+
+```{r, echo=F}
+kNN_res = table(k,as.factor(test_pre$Quantile))
+kNN_res
+sum(kNN_res)  #<- the total is all the test examples
+```
+
+
+```{r, echo=F}
+kNN_acc = sum(kNN_res[row(kNN_res) == col(kNN_res)]) / sum(kNN_res)
+kNN_acc
+```
+
+
+```{r, echo=F}
+for (w in unique(data$WARD)){
+  cat("\n",w,": ")
+  ward <- subset(data,WARD==w)
+
+library(rpart)
+
+# grow tree 
+fit <- rpart(PRICE~BATHRM+ ROOMS+ LANDAREA+LATITUDE+LONGITUDE+BATHRM+ROOMS+LANDAREA+FIREPLACES+YR_RMDL+GRADE+CNDTN+ASSESSMENT_NBHD,
+   method="anova", data=ward)
+
+printcp(fit) # display the results 
+}
+
+```
+
+```{r, echo=F}
+for (w in unique(data$WARD)){
+  cat("\n",w,": ")
+  ward <- subset(data,WARD==w)
+trainLabels <- names(fit$variable.importance)
+testLabels <- c("Quantile")
+
+data2 <- ward
+smp_size <- floor(0.75 * nrow(data2))
+ for (i in trainLabels){
+   cat(i)
+   data2[i]<- sapply(data2[i], as.numeric)
+   data2[i]<- sapply(data2[i], range01)
+ }
+
+train_ind <- sample(seq_len(nrow(data2)), size = smp_size)
+
+train <- data2[train_ind, ]
+test <- data2[-train_ind, ]
+
+train_set <- train[trainLabels]
+test_set <- test[trainLabels]
+train_pre <- train[testLabels]
+test_pre <- test[testLabels]
+for (i in 6:10){
+k <- knn(train=train[, trainLabels], test = test[,trainLabels],cl = train[, c("Quantile")], k = i)
+kNN_res = table(k,as.factor(test_pre$Quantile))
+
+sum(kNN_res)  #<- the total is all the test examples
+
+kNN_acc = sum(kNN_res[row(kNN_res) == col(kNN_res)]) / sum(kNN_res)
+cat(" kNN_acc:",kNN_acc," k value:",i)}}
+
+```
