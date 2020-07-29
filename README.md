@@ -8,10 +8,10 @@ Based on the progress of the previous project and what has been learned. We have
 3. How to predict and classify the condition of a property?
 
 ## Dataset
-The dataset was derived from Kaggle, which was derived from https://www.kaggle.com/christophercorrea/dc-residential-properties. We have completed data cleaning in the first project. The file DC_Properties.csv contains 125k rows and 49 columns. 
+The dataset was derived from Kaggle, which was derived from https://www.kaggle.com/christophercorrea/dc-residential-properties. We have completed data cleaning in the first project. The file `DC_Properties.csv` contains 125k rows and 49 columns. 
 
 ## Platform
-RStudio Version: 1.1.463
+RStudio Version: `1.1.463`
 
 ## Packages
 R Packages and libraries: `library("bestglm")`, `library ("glmnet")`, `library ("gmodels")`, `library ("pROC")`, `library ("pscl")`, `library ("rpart")`, `library ("rpart.plot")`, `library ("randomForest")`, `library ("C50")`, `library ("rpart")`, `library ("rpart")`.
